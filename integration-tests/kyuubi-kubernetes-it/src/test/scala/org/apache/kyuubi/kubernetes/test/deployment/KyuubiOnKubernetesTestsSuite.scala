@@ -56,7 +56,7 @@ class KyuubiOnKubernetesWithSparkTestsBase extends WithKyuubiServerOnKubernetes 
       Map(
         "spark.master" -> s"k8s://$miniKubeApiMaster",
         // We should update spark docker image in ./github/workflows/master.yml at the same time
-        "spark.kubernetes.container.image" -> "apache/spark:3.5.4",
+        "spark.kubernetes.container.image" -> "apache/spark:3.5.5",
         "spark.kubernetes.container.image.pullPolicy" -> "IfNotPresent",
         "spark.executor.memory" -> "512M",
         "spark.driver.memory" -> "1024M",
@@ -117,11 +117,11 @@ class KyuubiOnKubernetesWithClusterSparkTestsSuite
   override def beforeAll(): Unit = {
     super.beforeAll()
     val fs = FileSystem.get(getHadoopConf)
-    fs.mkdirs(
+    FileSystem.mkdirs(
+      fs,
       new Path("/spark"),
       new FsPermission(FsAction.ALL, FsAction.ALL, FsAction.ALL))
     fs.setPermission(new Path("/"), new FsPermission(FsAction.ALL, FsAction.ALL, FsAction.ALL))
-    fs.setPermission(new Path("/spark"), new FsPermission(FsAction.ALL, FsAction.ALL, FsAction.ALL))
     fs.copyFromLocalFile(new Path(driverTemplate.getPath), new Path("/spark/driver.yml"))
   }
 

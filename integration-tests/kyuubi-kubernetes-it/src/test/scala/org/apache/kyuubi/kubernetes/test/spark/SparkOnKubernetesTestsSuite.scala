@@ -51,7 +51,7 @@ abstract class SparkOnKubernetesSuiteBase
     // TODO Support more Spark version
     // Spark official docker image: https://hub.docker.com/r/apache/spark/tags
     KyuubiConf().set("spark.master", s"k8s://$apiServerAddress")
-      .set("spark.kubernetes.container.image", "apache/spark:3.5.4")
+      .set("spark.kubernetes.container.image", "apache/spark:3.5.5")
       .set("spark.kubernetes.container.image.pullPolicy", "IfNotPresent")
       .set("spark.executor.instances", "1")
       .set("spark.executor.memory", "512M")
@@ -139,7 +139,7 @@ class KyuubiOperationKubernetesClusterClientModeSuite
   extends SparkClientModeOnKubernetesSuiteBase {
   private lazy val k8sOperation: KubernetesApplicationOperation = {
     val operation = new KubernetesApplicationOperation
-    operation.initialize(conf)
+    operation.initialize(conf, None)
     operation
   }
 
@@ -188,7 +188,7 @@ class KyuubiOperationKubernetesClusterClusterModeSuite
   extends SparkClusterModeOnKubernetesSuiteBase {
   private lazy val k8sOperation: KubernetesApplicationOperation = {
     val operation = new KubernetesApplicationOperation
-    operation.initialize(conf)
+    operation.initialize(conf, None)
     operation
   }
 
@@ -230,7 +230,7 @@ class KyuubiOperationKubernetesClusterClusterModeSuite
         appMgrInfo,
         sessionHandle.identifier.toString)
       assert(appInfo.state == RUNNING)
-      assert(appInfo.name.startsWith(driverPodNamePrefix))
+      assert(appInfo.podName.exists(_.startsWith(driverPodNamePrefix)))
     }
 
     val killResponse = k8sOperation.killApplicationByTag(

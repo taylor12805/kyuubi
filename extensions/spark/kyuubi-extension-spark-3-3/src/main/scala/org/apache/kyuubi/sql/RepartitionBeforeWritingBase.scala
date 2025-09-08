@@ -20,9 +20,9 @@ package org.apache.kyuubi.sql
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
+import org.apache.spark.sql.execution.command.{CreateDataSourceTableAsSelectCommand, InsertIntoDataSourceDirCommand}
 import org.apache.spark.sql.execution.datasources.InsertIntoHadoopFsRelationCommand
-import org.apache.spark.sql.hive.execution.{CreateHiveTableAsSelectCommand, InsertIntoHiveTable, OptimizedCreateHiveTableAsSelectCommand}
+import org.apache.spark.sql.hive.execution.{CreateHiveTableAsSelectCommand, InsertIntoHiveDirCommand, InsertIntoHiveTable, OptimizedCreateHiveTableAsSelectCommand}
 import org.apache.spark.sql.internal.StaticSQLConf
 
 trait RepartitionBuilder extends Rule[LogicalPlan] with RepartitionBeforeWriteHelper {
@@ -58,6 +58,10 @@ abstract class RepartitionBeforeWritingDatasourceBase extends RepartitionBuilder
       val dynamicPartitionColumns =
         query.output.filter(attr => table.partitionColumnNames.contains(attr.name))
       c.copy(query = buildRepartition(dynamicPartitionColumns, query))
+
+    case i @ InsertIntoDataSourceDirCommand(_, _, query, _)
+        if query.resolved && canInsertRepartitionByExpression(query) =>
+      i.copy(query = buildRepartition(Seq.empty, query))
 
     case u @ Union(children, _, _) =>
       u.copy(children = children.map(addRepartition))
@@ -101,6 +105,10 @@ abstract class RepartitionBeforeWritingHiveBase extends RepartitionBuilder {
         query.output.filter(attr => table.partitionColumnNames.contains(attr.name))
       c.copy(query = buildRepartition(dynamicPartitionColumns, query))
 
+    case c @ InsertIntoHiveDirCommand(_, _, query, _, _)
+        if query.resolved && canInsertRepartitionByExpression(query) =>
+      c.copy(query = buildRepartition(Seq.empty, query))
+
     case u @ Union(children, _, _) =>
       u.copy(children = children.map(addRepartition))
 
@@ -118,6 +126,7 @@ trait RepartitionBeforeWriteHelper extends Rule[LogicalPlan] {
       case _: Window => true
       case s: Sort if s.global => true
       case _: RepartitionOperation => true
+      case _: RebalancePartitions => true
       case _: GlobalLimit => true
       case _ => false
     }.isDefined
@@ -131,8 +140,8 @@ trait RepartitionBeforeWriteHelper extends Rule[LogicalPlan] {
       case SubqueryAlias(_, child) => canInsert(child)
       case Limit(_, _) => false
       case _: Sort => false
-      case _: RepartitionByExpression => false
-      case _: Repartition => false
+      case _: RepartitionOperation => false
+      case _: RebalancePartitions => false
       case _ => true
     }
 

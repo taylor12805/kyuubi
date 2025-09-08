@@ -19,29 +19,32 @@ package org.apache.spark.sql
 
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, RebalancePartitions, Sort}
-import org.apache.spark.sql.execution.command.DataWritingCommand
+import org.apache.spark.sql.execution.command.{DataWritingCommand, InsertIntoDataSourceDirCommand}
 import org.apache.spark.sql.execution.datasources.InsertIntoHadoopFsRelationCommand
 import org.apache.spark.sql.hive.HiveUtils
-import org.apache.spark.sql.hive.execution.InsertIntoHiveTable
+import org.apache.spark.sql.hive.execution.{InsertIntoHiveDirCommand, InsertIntoHiveTable}
 
 import org.apache.kyuubi.sql.KyuubiSQLConf
 
 class RebalanceBeforeWritingSuite extends KyuubiSparkSQLExtensionTest {
 
   test("check rebalance exists") {
-    def check(df: => DataFrame, expectedRebalanceNum: Int = 1): Unit = {
+    def check(
+        df: => DataFrame,
+        expectedRebalanceNumEnabled: Int = 1,
+        expectedRebalanceNumDisabled: Int = 0): Unit = {
       withSQLConf(KyuubiSQLConf.INSERT_REPARTITION_BEFORE_WRITE_IF_NO_SHUFFLE.key -> "true") {
         withListener(df) { write =>
           assert(write.collect {
             case r: RebalancePartitions => r
-          }.size == expectedRebalanceNum)
+          }.size == expectedRebalanceNumEnabled)
         }
       }
       withSQLConf(KyuubiSQLConf.INSERT_REPARTITION_BEFORE_WRITE_IF_NO_SHUFFLE.key -> "false") {
         withListener(df) { write =>
           assert(write.collect {
             case r: RebalancePartitions => r
-          }.isEmpty)
+          }.size == expectedRebalanceNumDisabled)
         }
       }
     }
@@ -70,6 +73,14 @@ class RebalanceBeforeWritingSuite extends KyuubiSparkSQLExtensionTest {
         withTable("tmp1") {
           sql(s"CREATE TABLE tmp1 (c1 int) $storage")
           check(sql("INSERT INTO TABLE tmp1 SELECT * FROM VALUES(1),(2),(3) AS t(c1)"))
+        }
+
+        withTable("tmp1") {
+          sql(s"CREATE TABLE tmp1 (c1 int) $storage")
+          check(
+            sql("INSERT INTO TABLE tmp1 SELECT /*+ REBALANCE */ * FROM VALUES(1),(2),(3) AS t(c1)"),
+            1,
+            1)
         }
 
         withTable("tmp1", "tmp2") {
@@ -265,6 +276,44 @@ class RebalanceBeforeWritingSuite extends KyuubiSparkSQLExtensionTest {
           checkShuffleAndSort(df5.queryExecution.analyzed, 1, 1)
         }
       }
+    }
+  }
+
+  test("Test rebalance in InsertIntoHiveDirCommand") {
+    withSQLConf(
+      HiveUtils.CONVERT_METASTORE_PARQUET.key -> "false",
+      HiveUtils.CONVERT_METASTORE_CTAS.key -> "false",
+      KyuubiSQLConf.INSERT_REPARTITION_BEFORE_WRITE_IF_NO_SHUFFLE.key -> "true") {
+      withTempDir(tmpDir => {
+        spark.range(0, 1000, 1, 10).createOrReplaceTempView("tmp_table")
+        val df = sql(s"INSERT OVERWRITE DIRECTORY '${tmpDir.getPath}' " +
+          s"STORED AS PARQUET SELECT * FROM tmp_table")
+        val insertHiveDirCommand = df.queryExecution.analyzed.collect {
+          case _: InsertIntoHiveDirCommand => true
+        }
+        assert(insertHiveDirCommand.size == 1)
+        val repartition = df.queryExecution.analyzed.collect {
+          case _: RebalancePartitions => true
+        }
+        assert(repartition.size == 1)
+      })
+    }
+  }
+
+  test("Test rebalance in InsertIntoDataSourceDirCommand") {
+    withSQLConf(
+      KyuubiSQLConf.INSERT_REPARTITION_BEFORE_WRITE_IF_NO_SHUFFLE.key -> "true") {
+      withTempDir(tmpDir => {
+        spark.range(0, 1000, 1, 10).createOrReplaceTempView("tmp_table")
+        val df = sql(s"INSERT OVERWRITE DIRECTORY '${tmpDir.getPath}' " +
+          s"USING PARQUET SELECT * FROM tmp_table")
+        assert(df.queryExecution.analyzed.isInstanceOf[InsertIntoDataSourceDirCommand])
+        val repartition =
+          df.queryExecution.analyzed.asInstanceOf[InsertIntoDataSourceDirCommand].query.collect {
+            case _: RebalancePartitions => true
+          }
+        assert(repartition.size == 1)
+      })
     }
   }
 }

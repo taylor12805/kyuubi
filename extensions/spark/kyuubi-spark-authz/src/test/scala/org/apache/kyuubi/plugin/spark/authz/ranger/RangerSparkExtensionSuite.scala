@@ -37,7 +37,10 @@ import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.kyuubi.Utils
+import org.apache.kyuubi.plugin.lineage.Lineage
+import org.apache.kyuubi.plugin.lineage.helper.SparkSQLLineageParseHelper
 import org.apache.kyuubi.plugin.spark.authz.{AccessControlException, SparkSessionProvider}
+import org.apache.kyuubi.plugin.spark.authz.MysqlContainerEnv
 import org.apache.kyuubi.plugin.spark.authz.RangerTestNamespace._
 import org.apache.kyuubi.plugin.spark.authz.RangerTestUsers._
 import org.apache.kyuubi.plugin.spark.authz.rule.Authorization.KYUUBI_AUTHZ_TAG
@@ -45,13 +48,40 @@ import org.apache.kyuubi.plugin.spark.authz.util.AuthZUtils._
 import org.apache.kyuubi.util.AssertionUtils._
 import org.apache.kyuubi.util.reflect.ReflectUtils._
 abstract class RangerSparkExtensionSuite extends AnyFunSuite
-  with SparkSessionProvider with BeforeAndAfterAll {
+  with SparkSessionProvider with BeforeAndAfterAll with MysqlContainerEnv {
   // scalastyle:on
   override protected val extension: SparkSessionExtensions => Unit = new RangerSparkExtension
+
+  var mysqlJdbcUrl = ""
+  var mysqlUsername = ""
+  var mysqlPassword = ""
+  var driverClassName = ""
+
+  override def getMysqlJdbcUrl: String = mysqlJdbcUrl
+
+  override def getMysqlUsername: String = mysqlUsername
+
+  override def getMysqlPassword: String = mysqlPassword
+
+  override def getDriverClassName: String = driverClassName
 
   override def afterAll(): Unit = {
     spark.stop()
     super.afterAll()
+    if (useMysqlEnv) {
+      stopEngine()
+    }
+  }
+
+  override def beforeAll(): Unit = {
+    if (useMysqlEnv) {
+      startEngine()
+      this.mysqlJdbcUrl = containerDef.jdbcUrl
+      this.mysqlUsername = containerDef.username
+      this.mysqlPassword = containerDef.password
+      this.driverClassName = containerDef.driverClassName
+    }
+    super.beforeAll()
   }
 
   protected def errorMessage(
@@ -1482,6 +1512,33 @@ class HiveCatalogRangerSparkExtensionSuite extends RangerSparkExtensionSuite {
             someone,
             sql(s"SELECT count(id) FROM $db1.$view1 WHERE id > 1").collect()))(
           s"does not have [select] privilege on [$db1/$view1/id]")
+      }
+    }
+  }
+
+  test("Test view lineage") {
+    def extractLineage(sql: String): Lineage = {
+      val parsed = spark.sessionState.sqlParser.parsePlan(sql)
+      val qe = spark.sessionState.executePlan(parsed)
+      val analyzed = qe.analyzed
+      SparkSQLLineageParseHelper(spark).transformToLineage(0, analyzed).get
+    }
+
+    val db1 = defaultDb
+    val table1 = "table1"
+    val view1 = "view1"
+    withSingleCallEnabled {
+      withCleanTmpResources(Seq((s"$db1.$table1", "table"), (s"$db1.$view1", "view"))) {
+        doAs(admin, sql(s"CREATE TABLE IF NOT EXISTS $db1.$table1 (id int, scope int)"))
+        doAs(admin, sql(s"CREATE VIEW $db1.$view1 AS SELECT * FROM $db1.$table1"))
+
+        val lineage = doAs(
+          admin,
+          extractLineage(s"SELECT id FROM $db1.$view1 WHERE id > 1"))
+        assert(lineage.inputTables.size == 1)
+        assert(lineage.inputTables.head === s"spark_catalog.$db1.$table1")
+        assert(lineage.columnLineage.size == 1)
+        assert(lineage.columnLineage.head.originalColumns.head === s"spark_catalog.$db1.$table1.id")
       }
     }
   }
