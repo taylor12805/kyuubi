@@ -274,19 +274,28 @@ object KyuubiArrowConverters extends SQLConfHelper with Logging {
       var estimatedBatchSize = 0L
       Utils.tryWithSafeFinally {
 
+        def isBatchSizeLimitExceeded: Boolean = {
+          // If `maxEstimatedBatchSize` is zero or negative, it implies unlimited.
+          maxEstimatedBatchSize > 0 && estimatedBatchSize >= maxEstimatedBatchSize
+        }
+        def isRecordLimitExceeded: Boolean = {
+          // If `maxRecordsPerBatch` is zero or negative, it implies unlimited.
+          maxRecordsPerBatch > 0 && rowCountInLastBatch >= maxRecordsPerBatch
+        }
+        def isGlobalLimitNotReached: Boolean = {
+          // If the limit is negative, it means no restriction
+          // or the current number of rows has not reached the limit.
+          rowCount < limit || limit < 0
+        }
+
         // Always write the first row.
-        while (rowIter.hasNext && (
-            // For maxBatchSize and maxRecordsPerBatch, respect whatever smaller.
+        while (rowIter.hasNext && isGlobalLimitNotReached && (
             // If the size in bytes is positive (set properly), always write the first row.
-            rowCountInLastBatch == 0 && maxEstimatedBatchSize > 0 ||
-              // If the size in bytes of rows are 0 or negative, unlimit it.
-              estimatedBatchSize <= 0 ||
-              estimatedBatchSize < maxEstimatedBatchSize ||
-              // If the size of rows are 0 or negative, unlimit it.
-              maxRecordsPerBatch <= 0 ||
-              rowCountInLastBatch < maxRecordsPerBatch ||
-              rowCount < limit ||
-              limit < 0)) {
+            rowCountInLastBatch == 0 ||
+              // If either limit is hit, create a batch. This implies that the limit that is hit
+              // first triggers the creation of a batch even if the other limit is not yet hit
+              // hence preferring the more restrictive limit.
+              (!isBatchSizeLimitExceeded && !isRecordLimitExceeded))) {
           val row = rowIter.next()
           arrowWriter.write(row)
           estimatedBatchSize += (row match {
@@ -302,7 +311,7 @@ object KyuubiArrowConverters extends SQLConfHelper with Logging {
         MessageSerializer.serialize(writeChannel, batch)
 
         // Always write the Ipc options at the end.
-        ArrowStreamWriter.writeEndOfStream(writeChannel, ARROW_IPC_OPTION_DEFAULT)
+        ArrowStreamWriter.writeEndOfStream(writeChannel, IpcOption.DEFAULT)
 
         batch.close()
       } {
@@ -343,7 +352,4 @@ object KyuubiArrowConverters extends SQLConfHelper with Logging {
       errorOnDuplicatedFieldNames,
       largeVarTypes)
   }
-
-  // IpcOption.DEFAULT was introduced in ARROW-11081(ARROW-4.0.0), add this for adapt Spark 3.2
-  final private val ARROW_IPC_OPTION_DEFAULT = new IpcOption()
 }

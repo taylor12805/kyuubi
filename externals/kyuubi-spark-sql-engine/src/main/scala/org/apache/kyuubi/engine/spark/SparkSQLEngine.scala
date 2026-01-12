@@ -383,8 +383,9 @@ object SparkSQLEngine extends Logging {
   }
 
   def main(args: Array[String]): Unit = {
-    if (KyuubiSparkUtil.SPARK_ENGINE_RUNTIME_VERSION === "3.2") {
-      warn("The support for Spark 3.2 is deprecated, and will be removed in the next version.")
+    if (KyuubiSparkUtil.SPARK_ENGINE_RUNTIME_VERSION <= "3.4") {
+      warn("The support for Spark 3.3 and 3.4 is deprecated, and will be removed " +
+        "in a future version.")
     }
     val startedTime = System.currentTimeMillis()
     val submitTime = kyuubiConf.getOption(KYUUBI_ENGINE_SUBMIT_TIME_KEY) match {

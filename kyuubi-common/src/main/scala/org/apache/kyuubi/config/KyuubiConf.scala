@@ -2077,6 +2077,24 @@ object KyuubiConf {
       .timeConf
       .createWithDefault(Duration.ofMinutes(30).toMillis)
 
+  val METADATA_CLEANER_BATCH_SIZE: ConfigEntry[Int] =
+    buildConf("kyuubi.metadata.cleaner.batch.size")
+      .serverOnly
+      .doc("The batch size for cleaning expired metadata. " +
+        "This is used to avoid holding the delete lock for a long time " +
+        "when there are too many expired metadata to be cleaned.")
+      .version("1.11.0")
+      .intConf
+      .createWithDefault(1000)
+
+  val METADATA_CLEANER_BATCH_INTERVAL: ConfigEntry[Long] =
+    buildConf("kyuubi.metadata.cleaner.batch.interval")
+      .serverOnly
+      .internal
+      .doc("The interval to wait before next batch of cleaning expired metadata.")
+      .timeConf
+      .createWithDefault(Duration.ofSeconds(3).toMillis)
+
   val METADATA_RECOVERY_THREADS: ConfigEntry[Int] =
     buildConf("kyuubi.metadata.recovery.threads")
       .serverOnly
@@ -2085,6 +2103,19 @@ object KyuubiConf {
       .version("1.6.0")
       .intConf
       .createWithDefault(10)
+
+  val METADATA_RECOVERY_WAIT_ENGINE_SUBMISSION: ConfigEntry[Boolean] =
+    buildConf("kyuubi.metadata.recovery.waitEngineSubmission")
+      .serverOnly
+      .doc("Whether a metadata recovery task should wait for its corresponding engine " +
+        "submission to complete before finishing. All recovery tasks are submitted to a fixed " +
+        s"thread pool controlled by ${METADATA_RECOVERY_THREADS.key}. If true, a task blocks " +
+        "until the engine submission is done, helping throttle the load on the system " +
+        s"if ${SESSION_ENGINE_STARTUP_WAIT_COMPLETION.key} is false. " +
+        "If false, the task returns immediately after opening the session without waiting.")
+      .version("1.10.3")
+      .booleanConf
+      .createWithDefault(false)
 
   val METADATA_REQUEST_RETRY_INTERVAL: ConfigEntry[Long] =
     buildConf("kyuubi.metadata.request.retry.interval")
@@ -2448,6 +2479,7 @@ object KyuubiConf {
     .doc("The name of the engine pool.")
     .version("1.5.0")
     .stringConf
+    .transformToLowerCase
     .checkValue(validZookeeperSubPath.matcher(_).matches(), "must be valid zookeeper sub path.")
     .createWithDefault("engine-pool")
 
@@ -2652,6 +2684,14 @@ object KyuubiConf {
         _.toSet.subsetOf(Set("JSON", "JDBC", "CUSTOM", "KAFKA")),
         "Unsupported event loggers")
       .createWithDefault(Nil)
+
+  val SERVER_EVENT_ASYNC_ENABLED: ConfigEntry[Boolean] =
+    buildConf("kyuubi.backend.server.event.async.enabled")
+      .doc("Whether backend server event logging is asynchronous.")
+      .version("1.11.0")
+      .serverOnly
+      .booleanConf
+      .createWithDefault(false)
 
   @deprecated("using kyuubi.engine.spark.event.loggers instead", "1.6.0")
   val ENGINE_EVENT_LOGGERS: ConfigEntry[Seq[String]] =
